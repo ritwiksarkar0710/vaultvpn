@@ -76,21 +76,19 @@ class VaultVpnService : VpnService() {
             try {
                 delay(800)
 
-                // Build VPN interface with proper routing
+                // Build a placeholder VPN interface.
+                // Until a real packet-forwarding tunnel is wired in, avoid claiming
+                // the default routes or browsers will lose connectivity.
                 val builder = Builder()
                     .setSession("VaultVPN - ${server.city}")
                     .addAddress("10.8.0.2", 24)
-                    // Add IPv6 address so modern browsers do not bypass the tunnel.
                     .addAddress("fd00:1:fd00:1:fd00:1:fd00:1", 128)
-                    // Route ALL traffic through VPN.
-                    .addRoute("0.0.0.0", 0)
-                    .addRoute("::", 0)
-                    // Cloudflare DNS for fast, private resolution.
+                    // Keep DNS available for app metadata, but do not override
+                    // system-wide routing before the actual tunnel is implemented.
                     .addDnsServer("1.1.1.1")
                     .addDnsServer("1.0.0.1")
                     .addDnsServer("2606:4700:4700::1111")
                     .addDnsServer("2606:4700:4700::1001")
-                    // Google DNS as fallback.
                     .addDnsServer("8.8.8.8")
                     .setMtu(1420)
                     .setBlocking(false)

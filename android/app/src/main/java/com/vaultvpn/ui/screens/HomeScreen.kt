@@ -17,7 +17,6 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.*
-import androidx.hilt.navigation.compose.hiltViewModel
 import com.vaultvpn.data.model.*
 import com.vaultvpn.ui.theme.*
 import com.vaultvpn.ui.viewmodel.VpnViewModel
@@ -25,7 +24,7 @@ import com.vaultvpn.ui.viewmodel.VpnViewModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    viewModel: VpnViewModel = hiltViewModel(),
+    viewModel: VpnViewModel,
     onNavigateToServers: () -> Unit,
     onNavigateToSettings: () -> Unit
 ) {

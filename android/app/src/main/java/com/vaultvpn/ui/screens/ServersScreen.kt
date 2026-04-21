@@ -14,14 +14,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.*
-import androidx.hilt.navigation.compose.hiltViewModel
 import com.vaultvpn.data.model.*
 import com.vaultvpn.ui.theme.*
 import com.vaultvpn.ui.viewmodel.VpnViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ServersScreen(viewModel: VpnViewModel = hiltViewModel(), onBack: () -> Unit) {
+fun ServersScreen(viewModel: VpnViewModel, onBack: () -> Unit) {
     val servers        by viewModel.servers.collectAsState()
     val selectedServer by viewModel.selectedServer.collectAsState()
     var query          by remember { mutableStateOf("") }
