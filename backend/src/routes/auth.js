@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { body, validationResult } = require('express-validator');
-const { User, RefreshToken } = require('../models');
+const { User, RefreshToken } = require('../../index');
 const { authenticate } = require('../middleware/auth');
 
 const ACCESS_TOKEN_TTL = '15m';

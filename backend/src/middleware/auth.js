@@ -2,7 +2,7 @@
 // middleware/auth.js — JWT Verification Gatekeeper
 // ============================================================
 const jwt = require('jsonwebtoken');
-const { User } = require('../models');
+const { User } = require('../../index');
 
 /**
  * authenticate: Middleware to protect private routes

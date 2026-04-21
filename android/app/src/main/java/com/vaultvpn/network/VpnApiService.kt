@@ -5,7 +5,7 @@ import retrofit2.http.*
 
 interface VpnApiService {
 
-    @GET("servers")
+    @GET("vpn/servers")
     suspend fun getServers(): ApiResponse<ServersResponse>
 
     @GET("user/me")

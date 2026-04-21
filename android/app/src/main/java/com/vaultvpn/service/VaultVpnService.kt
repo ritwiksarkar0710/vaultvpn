@@ -2,7 +2,9 @@ package com.vaultvpn.service
 
 import android.app.*
 import android.content.Intent
+import android.net.IpPrefix
 import android.net.VpnService
+import android.os.Build
 import android.os.Binder
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
@@ -12,10 +14,7 @@ import com.vaultvpn.data.model.*
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.net.InetAddress
-import java.nio.ByteBuffer
 
 @AndroidEntryPoint
 class VaultVpnService : VpnService() {
@@ -81,17 +80,22 @@ class VaultVpnService : VpnService() {
                 val builder = Builder()
                     .setSession("VaultVPN - ${server.city}")
                     .addAddress("10.8.0.2", 24)
-                    // Route ALL traffic through VPN
+                    // Add IPv6 address so modern browsers do not bypass the tunnel.
+                    .addAddress("fd00:1:fd00:1:fd00:1:fd00:1", 128)
+                    // Route ALL traffic through VPN.
                     .addRoute("0.0.0.0", 0)
-                    // Cloudflare DNS for fast, private resolution
+                    .addRoute("::", 0)
+                    // Cloudflare DNS for fast, private resolution.
                     .addDnsServer("1.1.1.1")
                     .addDnsServer("1.0.0.1")
-                    // Google DNS as fallback
+                    .addDnsServer("2606:4700:4700::1111")
+                    .addDnsServer("2606:4700:4700::1001")
+                    // Google DNS as fallback.
                     .addDnsServer("8.8.8.8")
                     .setMtu(1420)
-                    // Block IPv6 leaks
-                    .addRoute("2000::", 3)
                     .setBlocking(false)
+
+                excludeServerEndpoint(builder, server)
 
                 val pfd = builder.establish()
                     ?: throw IllegalStateException("VPN permission denied. Please allow VPN access.")
@@ -135,6 +139,16 @@ class VaultVpnService : VpnService() {
     private fun cleanupTunnel() {
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
+    }
+
+    private fun excludeServerEndpoint(builder: Builder, server: VpnServer) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+
+        runCatching {
+            val endpoint = InetAddress.getByName(server.ipAddress)
+            val prefix = if (endpoint.address.size == 16) 128 else 32
+            builder.excludeRoute(IpPrefix(endpoint, prefix))
+        }
     }
 
     private fun startStatsCollection(server: VpnServer) {
