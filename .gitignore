@@ -1,0 +1,9 @@
+.codex
+.codex/
+node_modules/
+backend/node_modules/
+android/.gradle-local/
+*.log
+*.tmp
+.env
+backend/.env
