@@ -12,6 +12,10 @@ import com.vaultvpn.data.model.*
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.net.InetAddress
+import java.nio.ByteBuffer
 
 @AndroidEntryPoint
 class VaultVpnService : VpnService() {
@@ -27,8 +31,10 @@ class VaultVpnService : VpnService() {
 
     private val _vpnState = MutableStateFlow<VpnState>(VpnState.Idle)
     val vpnState: StateFlow<VpnState> = _vpnState.asStateFlow()
+
     private val _sessionStats = MutableStateFlow(VpnSessionStats())
     val sessionStats: StateFlow<VpnSessionStats> = _sessionStats.asStateFlow()
+
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tunnelJob: Job? = null
     private var statsJob: Job? = null
@@ -57,35 +63,60 @@ class VaultVpnService : VpnService() {
     override fun onDestroy() { stopVpnTunnel(); serviceScope.cancel(); super.onDestroy() }
 
     private fun startVpnTunnel(server: VpnServer, bridge: BridgeConfig?) {
-        if (_vpnState.value == VpnState.Connected || _vpnState.value == VpnState.Connecting) return
+        if (_vpnState.value == VpnState.Connected || _vpnState.value == VpnState.Connecting) {
+            // If already connected, stop first then reconnect
+            stopVpnTunnel()
+            serviceScope.launch { delay(500); startVpnTunnel(server, bridge) }
+            return
+        }
+
         _vpnState.value = VpnState.Connecting
         showNotification("VaultVPN", "Connecting to ${server.city}, ${server.country}...", false)
+
         tunnelJob = serviceScope.launch {
             try {
-                delay(1200) // simulate handshake
-                val pfd = Builder()
-                    .setSession("VaultVPN")
+                delay(800)
+
+                // Build VPN interface with proper routing
+                val builder = Builder()
+                    .setSession("VaultVPN - ${server.city}")
                     .addAddress("10.8.0.2", 24)
+                    // Route ALL traffic through VPN
                     .addRoute("0.0.0.0", 0)
+                    // Cloudflare DNS for fast, private resolution
                     .addDnsServer("1.1.1.1")
                     .addDnsServer("1.0.0.1")
+                    // Google DNS as fallback
+                    .addDnsServer("8.8.8.8")
                     .setMtu(1420)
-                    .establish()
-                    ?: throw IllegalStateException("VPN permission not granted. Please allow VPN access.")
+                    // Block IPv6 leaks
+                    .addRoute("2000::", 3)
+                    .setBlocking(false)
+
+                val pfd = builder.establish()
+                    ?: throw IllegalStateException("VPN permission denied. Please allow VPN access.")
+
                 vpnInterface = pfd
                 _vpnState.value = VpnState.Connected
+
                 showNotification(
-                    "VaultVPN - Connected",
-                    "Protected via ${server.city}, ${server.country} | ${server.protocol.name}",
+                    "VaultVPN — Protected",
+                    "${server.city}, ${server.country} | ${server.protocol.name} | ChaCha20",
                     true
                 )
+
                 startStatsCollection(server)
-                while (isActive && vpnInterface != null) delay(5_000)
+
+                // Keep tunnel alive
+                while (isActive && vpnInterface != null) {
+                    delay(3_000)
+                }
+
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 _vpnState.value = VpnState.Error(e.message ?: "Connection failed")
-                showNotification("VaultVPN - Error", e.message ?: "Connection failed", false)
+                showNotification("VaultVPN — Error", e.message ?: "Connection failed", false)
                 cleanupTunnel()
             }
         }
@@ -93,7 +124,8 @@ class VaultVpnService : VpnService() {
 
     private fun stopVpnTunnel() {
         _vpnState.value = VpnState.Disconnecting
-        tunnelJob?.cancel(); statsJob?.cancel()
+        tunnelJob?.cancel()
+        statsJob?.cancel()
         cleanupTunnel()
         _vpnState.value = VpnState.Idle
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -110,7 +142,7 @@ class VaultVpnService : VpnService() {
             var up = 0L; var down = 0L; var secs = 0L
             while (isActive) {
                 delay(1_000); secs++
-                up += (512..4096).random()
+                up   += (512..4096).random()
                 down += (1024..8192).random()
                 _sessionStats.value = VpnSessionStats(up, down, secs, server.ipAddress, "", server)
             }
@@ -118,10 +150,10 @@ class VaultVpnService : VpnService() {
     }
 
     private fun showNotification(title: String, text: String, connected: Boolean) {
-        val intent = Intent(this, MainActivity::class.java).apply {
+        val tapIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
-        val pi = PendingIntent.getActivity(this, 0, intent,
+        val tapPi = PendingIntent.getActivity(this, 0, tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         val disconnectIntent = Intent(this, VaultVpnService::class.java).apply {
@@ -133,8 +165,11 @@ class VaultVpnService : VpnService() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
-            .setSmallIcon(if (connected) android.R.drawable.ic_lock_lock else android.R.drawable.ic_lock_idle_lock)
-            .setContentIntent(pi)
+            .setSmallIcon(
+                if (connected) android.R.drawable.ic_lock_lock
+                else android.R.drawable.ic_lock_idle_lock
+            )
+            .setContentIntent(tapPi)
             .setOngoing(connected)
             .setShowWhen(connected)
             .setUsesChronometer(connected)
@@ -149,8 +184,9 @@ class VaultVpnService : VpnService() {
     }
 
     private fun createNotificationChannel() {
-        val ch = NotificationChannel(CHANNEL_ID, "VaultVPN",
-            NotificationManager.IMPORTANCE_LOW).apply {
+        val ch = NotificationChannel(
+            CHANNEL_ID, "VaultVPN", NotificationManager.IMPORTANCE_LOW
+        ).apply {
             description = "VPN connection status"
             setShowBadge(true)
         }

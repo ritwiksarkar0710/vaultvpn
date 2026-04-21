@@ -33,35 +33,57 @@ fun HomeScreen(
     val stats          by viewModel.sessionStats.collectAsState()
     val selectedServer by viewModel.selectedServer.collectAsState()
     val bridgeType     by viewModel.bridgeType.collectAsState()
+    val isConnected    = vpnState is VpnState.Connected
+    val isConnecting   = vpnState is VpnState.Connecting || vpnState is VpnState.Disconnecting
 
     Box(modifier = Modifier.fillMaxSize().background(VaultBlack)) {
         AnimatedGrid(vpnState)
         Column(
-            modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
-                .verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(Modifier.height(16.dp))
             TopBar(onSettings = onNavigateToSettings)
             Spacer(Modifier.height(32.dp))
-            PulsingShieldButton(state = vpnState, onToggle = { viewModel.toggleConnection() })
+
+            // ── Power Button ──────────────────────────────────────────────
+            PowerButton(
+                isConnected  = isConnected,
+                isConnecting = isConnecting,
+                onToggle     = { viewModel.toggleConnection() }
+            )
+
             Spacer(Modifier.height(24.dp))
             StatusLabel(vpnState)
             Spacer(Modifier.height(8.dp))
-            if (vpnState is VpnState.Connected) {
+
+            if (isConnected) {
                 IpBadge(stats.currentIp)
                 Spacer(Modifier.height(24.dp))
                 SpeedCard(stats)
+                Spacer(Modifier.height(12.dp))
             } else {
                 Spacer(Modifier.height(24.dp))
             }
-            ServerCard(server = selectedServer, onClick = onNavigateToServers)
+
+            // ── Server Card — always tappable ─────────────────────────────
+            ServerCard(
+                server      = selectedServer,
+                isConnected = isConnected,
+                onClick     = onNavigateToServers
+            )
+
             Spacer(Modifier.height(12.dp))
             BridgeSelector(current = bridgeType, onChange = { viewModel.setBridge(it) })
-            Spacer(Modifier.height(12.dp))
-            if (vpnState is VpnState.Connected) {
+
+            if (isConnected) {
+                Spacer(Modifier.height(12.dp))
                 StatsRow(stats)
-                Spacer(Modifier.height(16.dp))
             }
             Spacer(Modifier.height(32.dp))
         }
@@ -70,20 +92,20 @@ fun HomeScreen(
 
 @Composable
 private fun AnimatedGrid(state: VpnState) {
-    val infiniteTransition = rememberInfiniteTransition(label = "grid")
-    val offset by infiniteTransition.animateFloat(
-        initialValue = 0f, targetValue = 40f,
-        animationSpec = infiniteRepeatable(tween(4000, easing = LinearEasing), RepeatMode.Restart),
-        label = "offset"
+    val inf = rememberInfiniteTransition(label = "grid")
+    val offset by inf.animateFloat(
+        0f, 40f,
+        infiniteRepeatable(tween(4000, easing = LinearEasing), RepeatMode.Restart),
+        label = "off"
     )
-    val alpha = if (state is VpnState.Connected) 0.12f else 0.05f
+    val alpha     = if (state is VpnState.Connected) 0.12f else 0.05f
     val gridColor = if (state is VpnState.Connected) VaultGreen else VaultCyan
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val color = gridColor.copy(alpha = alpha)
+    Canvas(Modifier.fillMaxSize()) {
+        val c = gridColor.copy(alpha = alpha)
         var y = -offset
-        while (y < size.height) { drawLine(color, Offset(0f, y), Offset(size.width, y), 0.5f); y += 40f }
+        while (y < size.height) { drawLine(c, Offset(0f,y), Offset(size.width,y), 0.5f); y += 40f }
         var x = -offset % 40f
-        while (x < size.width) { drawLine(color, Offset(x, 0f), Offset(x, size.height), 0.5f); x += 40f }
+        while (x < size.width)  { drawLine(c, Offset(x,0f), Offset(x,size.height), 0.5f); x += 40f }
     }
 }
 
@@ -91,65 +113,119 @@ private fun AnimatedGrid(state: VpnState) {
 private fun TopBar(onSettings: () -> Unit) {
     Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
         Column {
-            Text("VAULT", style = MaterialTheme.typography.headlineLarge, color = VaultCyan,
-                fontWeight = FontWeight.Black, letterSpacing = 6.sp)
-            Text("VPN", style = MaterialTheme.typography.labelLarge, color = VaultGray, letterSpacing = 8.sp)
+            Text("VAULT", style = MaterialTheme.typography.headlineLarge,
+                color = VaultCyan, fontWeight = FontWeight.Black, letterSpacing = 6.sp)
+            Text("VPN", style = MaterialTheme.typography.labelLarge,
+                color = VaultGray, letterSpacing = 8.sp)
         }
         IconButton(onClick = onSettings,
-            modifier = Modifier.size(44.dp).border(1.dp, VaultBorder, CircleShape).background(VaultCardBg, CircleShape)) {
+            modifier = Modifier.size(44.dp)
+                .border(1.dp, VaultBorder, CircleShape)
+                .background(VaultCardBg, CircleShape)) {
             Icon(Icons.Default.Settings, "Settings", tint = VaultGray)
         }
     }
 }
 
+// ── Power Button — fixed ON/OFF logic ─────────────────────────────────────────
 @Composable
-private fun PulsingShieldButton(state: VpnState, onToggle: () -> Unit) {
-    val isConnected     = state is VpnState.Connected
-    val isConnecting    = state is VpnState.Connecting
-    val isDisconnecting = state is VpnState.Disconnecting
-    val inf = rememberInfiniteTransition(label = "pulse")
-    val pulseRadius by inf.animateFloat(0f, 1f,
-        infiniteRepeatable(tween(2000, easing = FastOutSlowInEasing), RepeatMode.Restart), label = "pr")
-    val rotation by inf.animateFloat(0f, 360f,
-        infiniteRepeatable(tween(if (isConnecting) 1200 else 6000, easing = LinearEasing)), label = "rot")
-    val primaryColor = when {
-        isConnected -> VaultGreen
-        isConnecting || isDisconnecting -> VaultOrange
-        else -> VaultCyan
+private fun PowerButton(
+    isConnected: Boolean,
+    isConnecting: Boolean,
+    onToggle: () -> Unit
+) {
+    val inf = rememberInfiniteTransition(label = "power")
+
+    // Pulse rings when connected (green, animated)
+    val pulseRadius by inf.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(2000, easing = FastOutSlowInEasing), RepeatMode.Restart),
+        label = "pulse"
+    )
+    // Spin ring when connecting
+    val rotation by inf.animateFloat(
+        0f, 360f,
+        infiniteRepeatable(tween(1000, easing = LinearEasing)),
+        label = "rot"
+    )
+
+    // Color: GREEN when connected, CYAN when off, ORANGE when connecting
+    val ringColor = when {
+        isConnected  -> VaultGreen
+        isConnecting -> VaultOrange
+        else         -> VaultCyan.copy(alpha = 0.5f)
     }
+    val buttonBg = when {
+        isConnected  -> VaultGreen.copy(alpha = 0.15f)
+        isConnecting -> VaultOrange.copy(alpha = 0.1f)
+        else         -> VaultCardBg
+    }
+
     Box(Modifier.size(220.dp), Alignment.Center) {
-        if (isConnected) repeat(3) { i ->
-            val p = ((pulseRadius + i * 0.33f) % 1f)
-            Canvas(Modifier.size(220.dp)) {
-                drawCircle(VaultGreen.copy(alpha = (1f - p) * 0.3f),
-                    (size.minDimension / 2) * (0.5f + p * 0.5f), style = Stroke(2f))
+        // Pulse rings — only when connected
+        if (isConnected) {
+            repeat(3) { i ->
+                val p = ((pulseRadius + i * 0.33f) % 1f)
+                Canvas(Modifier.size(220.dp)) {
+                    drawCircle(
+                        VaultGreen.copy(alpha = (1f - p) * 0.25f),
+                        (size.minDimension / 2) * (0.5f + p * 0.5f),
+                        style = Stroke(2f)
+                    )
+                }
             }
         }
-        if (isConnecting || isDisconnecting)
+
+        // Spinning arc when connecting
+        if (isConnecting) {
             Canvas(Modifier.size(200.dp).rotate(rotation)) {
-                drawArc(VaultOrange, 0f, 270f, false, style = Stroke(3f, cap = StrokeCap.Round))
+                drawArc(VaultOrange, 0f, 270f, false,
+                    style = Stroke(3f, cap = StrokeCap.Round))
             }
-        Canvas(Modifier.size(180.dp)) {
-            drawCircle(primaryColor.copy(0.15f), size.minDimension / 2)
-            drawCircle(primaryColor.copy(0.6f), size.minDimension / 2, style = Stroke(1.5f))
         }
+
+        // Static outer ring
+        Canvas(Modifier.size(180.dp)) {
+            drawCircle(ringColor.copy(alpha = 0.15f), size.minDimension / 2)
+            drawCircle(ringColor.copy(alpha = 0.8f), size.minDimension / 2,
+                style = Stroke(if (isConnected) 2.5f else 1.5f))
+        }
+
+        // Center button
         Button(
-            onClick = { if (!isConnecting && !isDisconnecting) onToggle() },
-            modifier = Modifier.size(140.dp), shape = CircleShape,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isConnected) VaultGreen.copy(0.15f) else VaultCardBg,
-                contentColor = primaryColor),
-            border = BorderStroke(2.dp, primaryColor),
+            onClick  = { if (!isConnecting) onToggle() },
+            modifier = Modifier.size(140.dp),
+            shape    = CircleShape,
+            colors   = ButtonDefaults.buttonColors(
+                containerColor = buttonBg,
+                contentColor   = ringColor
+            ),
+            border    = BorderStroke(2.dp, ringColor),
             elevation = ButtonDefaults.buttonElevation(0.dp)
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(if (isConnected) Icons.Default.Lock else Icons.Default.LockOpen,
-                    null, Modifier.size(40.dp), tint = primaryColor)
+                // Lock icon: LOCKED (filled) = connected, UNLOCKED = disconnected
+                Icon(
+                    imageVector = when {
+                        isConnected  -> Icons.Default.Lock
+                        isConnecting -> Icons.Default.Lock
+                        else         -> Icons.Default.LockOpen
+                    },
+                    contentDescription = null,
+                    modifier = Modifier.size(40.dp),
+                    tint = ringColor
+                )
                 Spacer(Modifier.height(4.dp))
-                Text(when (state) {
-                    is VpnState.Connected -> "ON"; is VpnState.Connecting -> "…"
-                    is VpnState.Disconnecting -> "…"; else -> "OFF"
-                }, style = MaterialTheme.typography.labelLarge, color = primaryColor)
+                Text(
+                    text = when {
+                        isConnecting -> "..."
+                        isConnected  -> "ON"
+                        else         -> "OFF"
+                    },
+                    style = MaterialTheme.typography.labelLarge,
+                    color = ringColor,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
@@ -164,23 +240,28 @@ private fun StatusLabel(state: VpnState) {
         is VpnState.Error         -> "ERROR"         to VaultRed
         else                      -> "NOT PROTECTED" to VaultRed
     }
-    Text(text, style = MaterialTheme.typography.labelLarge, color = color, letterSpacing = 4.sp)
+    Text(text, style = MaterialTheme.typography.labelLarge,
+        color = color, letterSpacing = 4.sp)
 }
 
 @Composable
 private fun IpBadge(ip: String) {
-    Surface(shape = RoundedCornerShape(20.dp), color = VaultCardBg, border = BorderStroke(1.dp, VaultBorder)) {
+    Surface(shape = RoundedCornerShape(20.dp), color = VaultCardBg,
+        border = BorderStroke(1.dp, VaultBorder)) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(Modifier.size(8.dp).background(VaultGreen, CircleShape))
-            Text(ip.ifBlank { "Hidden" }, style = MaterialTheme.typography.labelLarge, color = VaultGrayLight)
+            Text(ip.ifBlank { "Hidden" },
+                style = MaterialTheme.typography.labelLarge, color = VaultGrayLight)
         }
     }
 }
 
 @Composable
 private fun SpeedCard(stats: VpnSessionStats) {
-    Surface(Modifier.fillMaxWidth(), RoundedCornerShape(16.dp), VaultCardBg, border = BorderStroke(1.dp, VaultBorder)) {
+    Surface(Modifier.fillMaxWidth(), RoundedCornerShape(16.dp),
+        VaultCardBg, border = BorderStroke(1.dp, VaultBorder)) {
         Row(Modifier.padding(20.dp), Arrangement.SpaceEvenly) {
             SpeedItem("↑ UPLOAD",   formatBytes(stats.uploadBytes),   VaultCyan)
             Box(Modifier.width(1.dp).height(40.dp).background(VaultBorder))
@@ -200,29 +281,59 @@ private fun SpeedItem(label: String, value: String, color: Color) {
     }
 }
 
+// ── Server Card — always tappable, green border when connected ─────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ServerCard(server: VpnServer?, onClick: () -> Unit) {
-    Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp), color = VaultCardBg, border = BorderStroke(1.dp, VaultBorder)) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+private fun ServerCard(
+    server: VpnServer?,
+    isConnected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick  = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape    = RoundedCornerShape(16.dp),
+        color    = VaultCardBg,
+        border   = BorderStroke(
+            width = if (isConnected) 1.5.dp else 1.dp,
+            color = if (isConnected) VaultGreen.copy(0.6f) else VaultBorder
+        )
+    ) {
+        Row(Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text(server?.countryCode?.toFlagEmoji() ?: "🌐", fontSize = 32.sp)
                 Column {
-                    Text(server?.name ?: "Select Server",
-                        style = MaterialTheme.typography.titleMedium, color = VaultWhite)
-                    if (server != null) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            val pingColor = when { server.pingMs < 80 -> VaultGreen; server.pingMs < 150 -> VaultOrange; else -> VaultRed }
-                            Text("${server.pingMs}ms", style = MaterialTheme.typography.labelSmall, color = pingColor)
+                    Text(
+                        server?.name ?: "Select Server",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (isConnected) VaultGreen else VaultWhite
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        if (server != null) {
+                            val pc = when {
+                                server.pingMs < 80  -> VaultGreen
+                                server.pingMs < 150 -> VaultOrange
+                                else                -> VaultRed
+                            }
+                            Text("${server.pingMs}ms",
+                                style = MaterialTheme.typography.labelSmall, color = pc)
+                            Text("·", color = VaultGray,
+                                style = MaterialTheme.typography.labelSmall)
                         }
-                    } else {
-                        Text("Tap to select a server", style = MaterialTheme.typography.bodyMedium, color = VaultGray)
+                        Text(
+                            if (isConnected) "tap to switch server" else "tap to select",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = VaultGray
+                        )
                     }
                 }
             }
-            Icon(Icons.Default.ChevronRight, "Select", tint = VaultGray)
+            Icon(Icons.Default.ChevronRight, "Select",
+                tint = if (isConnected) VaultGreen else VaultGray)
         }
     }
 }
@@ -231,23 +342,30 @@ private fun ServerCard(server: VpnServer?, onClick: () -> Unit) {
 @Composable
 private fun BridgeSelector(current: BridgeType, onChange: (BridgeType) -> Unit) {
     val bridges = listOf(
-        BridgeType.NONE to "No Bridge", BridgeType.CLOUDFLARE_WARP to "Cloudflare",
-        BridgeType.OBFS4 to "OBFS4", BridgeType.SNOWFLAKE to "Snowflake"
+        BridgeType.NONE            to "None",
+        BridgeType.CLOUDFLARE_WARP to "Cloudflare",
+        BridgeType.OBFS4           to "OBFS4",
+        BridgeType.SNOWFLAKE       to "Snowflake"
     )
-    Surface(Modifier.fillMaxWidth(), RoundedCornerShape(16.dp), VaultCardBg, border = BorderStroke(1.dp, VaultBorder)) {
+    Surface(Modifier.fillMaxWidth(), RoundedCornerShape(16.dp),
+        VaultCardBg, border = BorderStroke(1.dp, VaultBorder)) {
         Column(Modifier.padding(16.dp)) {
-            Text("SECURITY BRIDGE", style = MaterialTheme.typography.labelSmall, color = VaultGray, letterSpacing = 2.sp)
+            Text("SECURITY BRIDGE",
+                style = MaterialTheme.typography.labelSmall,
+                color = VaultGray, letterSpacing = 2.sp)
             Spacer(Modifier.height(12.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 bridges.forEach { (type, label) ->
                     FilterChip(
-                        selected = current == type, onClick = { onChange(type) },
-                        label = { Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1) },
-                        colors = FilterChipDefaults.filterChipColors(
+                        selected = current == type,
+                        onClick  = { onChange(type) },
+                        label    = { Text(label,
+                            style = MaterialTheme.typography.labelSmall, maxLines = 1) },
+                        colors   = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = VaultCyan.copy(0.15f),
-                            selectedLabelColor = VaultCyan,
-                            containerColor = Color.Transparent,
-                            labelColor = VaultGray),
+                            selectedLabelColor     = VaultCyan,
+                            containerColor         = Color.Transparent,
+                            labelColor             = VaultGray),
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -259,14 +377,17 @@ private fun BridgeSelector(current: BridgeType, onChange: (BridgeType) -> Unit) 
 @Composable
 private fun StatsRow(stats: VpnSessionStats) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        StatChip("PROTOCOL", stats.connectedServer?.protocol?.name ?: "—", Modifier.weight(1f))
-        StatChip("ENCRYPTION", "AES-256", Modifier.weight(1f))
+        StatChip("PROTOCOL",
+            stats.connectedServer?.protocol?.name ?: "WireGuard",
+            Modifier.weight(1f))
+        StatChip("ENCRYPTION", "ChaCha20", Modifier.weight(1f))
     }
 }
 
 @Composable
 private fun StatChip(label: String, value: String, modifier: Modifier = Modifier) {
-    Surface(modifier, RoundedCornerShape(12.dp), VaultCardBg, border = BorderStroke(1.dp, VaultBorder)) {
+    Surface(modifier, RoundedCornerShape(12.dp),
+        VaultCardBg, border = BorderStroke(1.dp, VaultBorder)) {
         Column(Modifier.padding(12.dp)) {
             Text(label, style = MaterialTheme.typography.labelSmall, color = VaultGray)
             Spacer(Modifier.height(2.dp))
@@ -277,13 +398,14 @@ private fun StatChip(label: String, value: String, modifier: Modifier = Modifier
 
 private fun String.toFlagEmoji(): String {
     if (length != 2) return "🌐"
-    return String(intArrayOf(codePointAt(0) + 127397, codePointAt(1) + 127397), 0, 2)
+    return String(intArrayOf(codePointAt(0)+127397, codePointAt(1)+127397), 0, 2)
 }
-private fun formatBytes(bytes: Long) = when {
-    bytes < 1024 -> "${bytes}B"
-    bytes < 1048576 -> "${"%.1f".format(bytes/1024.0)}KB"
-    bytes < 1073741824 -> "${"%.1f".format(bytes/1048576.0)}MB"
-    else -> "${"%.2f".format(bytes/1073741824.0)}GB"
+private fun formatBytes(b: Long) = when {
+    b < 1024       -> "${b}B"
+    b < 1048576    -> "${"%.1f".format(b/1024.0)}KB"
+    b < 1073741824 -> "${"%.1f".format(b/1048576.0)}MB"
+    else           -> "${"%.2f".format(b/1073741824.0)}GB"
 }
-private fun formatDuration(s: Long) = if (s/3600 > 0) "%02d:%02d:%02d".format(s/3600,(s%3600)/60,s%60)
+private fun formatDuration(s: Long) =
+    if (s/3600 > 0) "%02d:%02d:%02d".format(s/3600,(s%3600)/60,s%60)
     else "%02d:%02d".format((s%3600)/60, s%60)
